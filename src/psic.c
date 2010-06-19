@@ -76,10 +76,9 @@ static void srv_read_cb(EV_P_ ev_io *w, int revents)
   char *ptr;
 
   len = read(srv, srv_buf, sizeof(srv_buf));
-  write(STDOUT_FILENO, srv_buf, len);
 
   ptr = srv_buf;
-  while(++ptr < srv_buf + len)
+  while(ptr < srv_buf + len)
     ptr = msg_parse(ptr);
 
   ev_io_start(EV_A_ &cli_write);
@@ -99,7 +98,13 @@ static void cli_read_cb(EV_P_ ev_io *w, int revents)
 
 static void cli_write_cb(EV_P_ ev_io *w, int revents)
 {
-  write(STDOUT_FILENO, srv_buf, sizeof(srv_buf));
+  struct irc_message *msg;
+  TAILQ_FOREACH(msg, &srv_msg_queue, link) {
+    puts(msg->usr);
+    puts(msg->cmd);
+    puts(msg->args);
+    TAILQ_REMOVE(&srv_msg_queue, msg, link);
+  }
   ev_io_stop(EV_A_ w);
 }
 
