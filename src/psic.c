@@ -1,16 +1,24 @@
 #include <sys/socket.h>
+#include <sys/queue.h>
 #include <unistd.h>
 
 #include <netdb.h>
 
-#include <assert.h>
-#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <ev.h>
 
 #include "util.h"
+
+struct irc_message {
+  /* STAILQ would be enough but linux doesn't have it */
+  TAILQ_ENTRY(irc_message);
+  char *usr;
+  char *cmd;
+  char *args;
+};
+TAILQ_HEAD(irc_message_queue, irc_message);
 
 static char *host = "irc.dieselpowered.me";
 //static char *host = "irc.rizon.net";
@@ -24,30 +32,35 @@ struct ev_io cli_read;
 struct ev_io cli_write;
 
 static int srv;
-static char bufi[4096];
-static char bufo[4096];
+static char srv_buf[4096];
+static char cli_buf[4096];
+
+static struct irc_message_queue srv_message_queue
+  = TAILQ_HEAD_INITIALIZER(srv_message_queue);
+static struct irc_message_queue cli_message_queue
+  = TAILQ_HEAD_INITIALIZER(cli_message_queue);
 
 static void cli_read_cb(EV_P_ ev_io *w, int revents)
 {
-  read(STDIN_FILENO, bufo, sizeof(bufo));
+  read(STDIN_FILENO, cli_buf, sizeof(cli_buf));
   ev_io_start(EV_A_ &srv_write);
 }
 
 static void cli_write_cb(EV_P_ ev_io *w, int revents)
 {
-  write(STDOUT_FILENO, bufi, sizeof(bufi));
+  write(STDOUT_FILENO, srv_buf, sizeof(srv_buf));
   ev_io_stop(EV_A_ w);
 }
 
 static void srv_read_cb(EV_P_ ev_io *w, int revents)
 {
-  read(srv, bufi, sizeof(bufi));
+  read(srv, srv_buf, sizeof(srv_buf));
   ev_io_start(EV_A_ &cli_write);
 }
 
 static void srv_write_cb(EV_P_ ev_io *w, int revents)
 {
-  write(srv, bufo, sizeof(bufo));
+  write(srv, cli_buf, sizeof(cli_buf));
   ev_io_stop(EV_A_ w);
 }
 
@@ -60,7 +73,8 @@ int main(int argc, const char *argv[])
     die("cannot initialize libev, bad $LIBEV_FLAGS in environment?");
 
   srv = dial(host, port);
-  snprintf(bufo, sizeof(bufo), "NICK %s\r\nUSER %s 0 * %s\r\n", nick, nick, nick);
+  snprintf(cli_buf, sizeof(cli_buf),
+           "NICK %s\r\nUSER %s 0 * %s\r\n", nick, nick, nick);
 
   ev_io_init(&srv_read, srv_read_cb, srv, EV_READ);
   ev_io_start(loop, &srv_read);
