@@ -34,7 +34,7 @@ int dial(const char *host, const char *port) {
   hints.ai_socktype = SOCK_STREAM;
 
   if(getaddrinfo(host, port, &hints, &res)) {
-    die("error: cannot resolve hostname '%s':", host);
+    die("error: cannot resolve hostname '%s'\n", host);
   }
   for(r = res; r; r = r->ai_next) {
     srv = socket(r->ai_family, r->ai_socktype, r->ai_protocol);
