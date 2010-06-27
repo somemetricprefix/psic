@@ -1,7 +1,4 @@
-#include <sys/socket.h>
-#include <sys/queue.h>
 #include <unistd.h>
-
 #include <netdb.h>
 
 #include <stdio.h> /* snprintf */
@@ -11,15 +8,15 @@
 #include <ev.h>
 
 #include "util.h"
+#include "queue.h"
 
 struct irc_message {
-  /* STAILQ would be enough but linux doesn't have it */
-  TAILQ_ENTRY(irc_message) link;
+  STAILQ_ENTRY(irc_message) link;
   char *usr;
   char *cmd;
   char *args;
 };
-TAILQ_HEAD(irc_msg_queue, irc_message);
+STAILQ_HEAD(irc_msg_queue, irc_message);
 
 static char *host = "irc.rizon.net";
 //static char *host = "irc.dieselpowered.me";
@@ -35,8 +32,8 @@ static int srv;
 static char srv_buf[4096];
 static char cli_buf[4096];
 
-static struct irc_msg_queue srv_msg_queue = TAILQ_HEAD_INITIALIZER(srv_msg_queue);
-static struct irc_msg_queue cli_msg_queue = TAILQ_HEAD_INITIALIZER(cli_msg_queue);
+static struct irc_msg_queue srv_msg_queue = STAILQ_HEAD_INITIALIZER(srv_msg_queue);
+static struct irc_msg_queue cli_msg_queue = STAILQ_HEAD_INITIALIZER(cli_msg_queue);
 
 static char *extract(char **str, char ch, size_t len)
 {
@@ -65,7 +62,7 @@ static char *msg_parse(char *str)
   msg->cmd  = strdup(cmd);
   msg->args = strdup(args);
 
-  TAILQ_INSERT_TAIL(&srv_msg_queue, msg, link);
+  STAILQ_INSERT_TAIL(&srv_msg_queue, msg, link);
 
   return ++str; /* skip also '\n' */
 }
@@ -99,13 +96,17 @@ static void cli_read_cb(EV_P_ ev_io *w, int revents)
 static void cli_write_cb(EV_P_ ev_io *w, int revents)
 {
   struct irc_message *msg;
-  TAILQ_FOREACH(msg, &srv_msg_queue, link) {
-    puts(msg->usr);
-    puts(msg->cmd);
-    puts(msg->args);
-    TAILQ_REMOVE(&srv_msg_queue, msg, link);
+
+  msg = STAILQ_FIRST(&srv_msg_queue);
+  puts(msg->usr);
+  puts(msg->cmd);
+  puts(msg->args);
+  STAILQ_REMOVE_HEAD(&srv_msg_queue, link);
+  free(msg);
+
+  if (STAILQ_EMPTY(&srv_msg_queue)) {
+    ev_io_stop(EV_A_ w);
   }
-  ev_io_stop(EV_A_ w);
 }
 
 int main(int argc, const char *argv[])
