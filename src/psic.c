@@ -1,5 +1,6 @@
+#include <sys/socket.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
-#include <netdb.h>
 
 #include <stdio.h> /* snprintf */
 #include <stdlib.h>
@@ -12,106 +13,120 @@
 
 struct irc_message {
   STAILQ_ENTRY(irc_message) link;
-  char *usr;
-  char *cmd;
-  char *args;
+  char *raw;
+  char *prefix;
+  char *command;
+  char *params;
 };
 STAILQ_HEAD(irc_msg_queue, irc_message);
 
 static char *host = "irc.rizon.net";
-//static char *host = "irc.dieselpowered.me";
 static char *port = "6669";
 static char *nick = "lolol";
 
-struct ev_io srv_read;
-struct ev_io srv_write;
-struct ev_io cli_read;
-struct ev_io cli_write;
+/* according to rfc2812 no irc message should be longer then that */
+static char srv_buf[512];
+static size_t srv_buf_len;
+static char cli_buf[512];
 
-static int srv;
-static char srv_buf[4096];
-static char cli_buf[4096];
+static struct ev_io cli_write;
 
-static struct irc_msg_queue srv_msg_queue = STAILQ_HEAD_INITIALIZER(srv_msg_queue);
-static struct irc_msg_queue cli_msg_queue = STAILQ_HEAD_INITIALIZER(cli_msg_queue);
+static struct irc_msg_queue msg_queue = STAILQ_HEAD_INITIALIZER(msg_queue);
 
-static char *extract(char **str, char ch, size_t len)
+static void parse(char *str)
 {
-  char *p = *str;
-  while (**str != ch && **str && *str < p + len)
-    (*str)++;
-  if (**str && *str < p + len)
-    *(*str)++ = '\0';
-  return p;
-}
-
-static char *msg_parse(char *str)
-{
-  char *usr, *cmd, *args;
   struct irc_message *msg;
+  char *p, *raw;
 
-  usr  = *str == ':' ? extract(&str, ' ', sizeof(srv_buf)) : host;
-  cmd  = extract(&str, ' ', sizeof(srv_buf));
-  args = extract(&str, '\r', sizeof(srv_buf));
+  p = raw = str;
 
-  msg = (struct irc_message *)malloc(sizeof(struct irc_message));
+  msg = (struct irc_message *)calloc(1, sizeof(struct irc_message));
   if (!msg)
-    die("error: malloc():");
+    die("error: calloc():");
 
-  msg->usr  = strdup(usr);
-  msg->cmd  = strdup(cmd);
-  msg->args = strdup(args);
+  msg->raw = strdup(raw);
+  if (!msg->raw)
+    die("error: strdup():");
 
-  STAILQ_INSERT_TAIL(&srv_msg_queue, msg, link);
+  /* TODO: parse message into irc_message struct */
+  msg->prefix = NULL;
+  while (*p) {
+    switch (*p) {
+    case ':':
+      if (!msg->prefix)
+        msg->prefix = raw;
+      break;
+    case ' ':
+      raw = p + 1;
+      if (!msg->command)
+        msg->command = raw;
+      else if (!msg->params)
+        msg->params = raw;
+      else
+        break;
+      *p = '\0';
+      break;
+    }
+    p++;
+  }
 
-  return ++str; /* skip also '\n' */
+  printf("a: %s\n", msg->params);
+  STAILQ_INSERT_TAIL(&msg_queue, msg, link);
 }
 
 static void srv_read_cb(EV_P_ ev_io *w, int revents)
 {
-  size_t len;
-  char *ptr;
+  char ch;
+  char buf[4096];
+  size_t len, i;
 
-  len = read(srv, srv_buf, sizeof(srv_buf));
+  len = recv(w->fd, buf, sizeof(buf), 0);
+  if (len == 0)
+    die("error: remote host closed connection:");
 
-  ptr = srv_buf;
-  while(ptr < srv_buf + len)
-    ptr = msg_parse(ptr);
+  for (i = 0; i < len; i++) {
+    ch = buf[i];
+    if (ch == '\r')
+      srv_buf[srv_buf_len++] = '\0';
+    else if (ch == '\n') {
+      parse(srv_buf);
+      srv_buf_len = 0;
+    } else
+      srv_buf[srv_buf_len++] = ch;
+  }
 
   ev_io_start(EV_A_ &cli_write);
 }
 
 static void srv_write_cb(EV_P_ ev_io *w, int revents)
 {
-  write(srv, cli_buf, sizeof(cli_buf));
+  send(w->fd, cli_buf, sizeof(cli_buf), 0);
   ev_io_stop(EV_A_ w);
-}
-
-static void cli_read_cb(EV_P_ ev_io *w, int revents)
-{
-  read(STDIN_FILENO, cli_buf, sizeof(cli_buf));
-  ev_io_start(EV_A_ &srv_write);
 }
 
 static void cli_write_cb(EV_P_ ev_io *w, int revents)
 {
-  struct irc_message *msg;
+  struct irc_message *msg, *tmp;
 
-  msg = STAILQ_FIRST(&srv_msg_queue);
-  puts(msg->usr);
-  puts(msg->cmd);
-  puts(msg->args);
-  STAILQ_REMOVE_HEAD(&srv_msg_queue, link);
-  free(msg);
-
-  if (STAILQ_EMPTY(&srv_msg_queue)) {
-    ev_io_stop(EV_A_ w);
+  STAILQ_FOREACH_SAFE(msg, &msg_queue, link, tmp) {
+    //puts(msg->prefix);
+    //puts(msg->command);
+    //puts(msg->params);
+    printf("b: %s\n", msg->params);
+    STAILQ_REMOVE(&msg_queue, msg, irc_message, link);
+    free(msg->raw);
+    free(msg);
   }
+
+  ev_io_stop(EV_A_ w);
 }
 
 int main(int argc, const char *argv[])
 {
+  int srv;
   struct ev_loop *loop;
+  struct ev_io srv_read;
+  struct ev_io srv_write;
 
   loop = ev_default_loop(EVFLAG_AUTO);
   if (!loop)
@@ -126,9 +141,6 @@ int main(int argc, const char *argv[])
 
   ev_io_init(&srv_write, srv_write_cb, srv, EV_WRITE);
   ev_io_start(loop, &srv_write);
-
-  ev_io_init(&cli_read, cli_read_cb, STDIN_FILENO, EV_READ);
-  ev_io_start(loop, &cli_read);
 
   ev_io_init(&cli_write, cli_write_cb, STDOUT_FILENO, EV_WRITE);
   //ev_io_start(loop, &cli_write);
