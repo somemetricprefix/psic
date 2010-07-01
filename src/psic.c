@@ -38,30 +38,30 @@ static struct irc_msg_queue msg_queue = STAILQ_HEAD_INITIALIZER(msg_queue);
 static void parse(char *str)
 {
   struct irc_msg *msg;
-  char *p, *raw;
+  char *p, *tmp;
 
-  p = raw = str;
+  p = tmp = str;
 
   msg = (struct irc_msg *)calloc(1, sizeof(struct irc_msg));
   if (!msg)
     die("error: calloc():");
 
-  msg->raw = strdup(raw);
+  msg->raw = strdup(tmp);
   if (!msg->raw)
     die("error: strdup():");
 
   while (*p) {
     switch (*p) {
-    case ':':
+    case ':': /* we have a prefix but only one */
       if (!msg->prefix)
-        msg->prefix = raw;
+        msg->prefix = tmp;
       break;
     case ' ':
-      raw = p + 1;
+      tmp = p + 1;
       if (!msg->command)
-        msg->command = raw;
+        msg->command = tmp;
       else if (!msg->params)
-        msg->params = raw;
+        msg->params = tmp;
       else
         break;
       *p = '\0';
@@ -84,7 +84,9 @@ static void srv_read_cb(EV_P_ ev_io *w, int revents)
   if (len == 0)
     die("error: remote host closed connection:");
 
-  for (i = 0; i < len; i++) {
+  /* Convert every line to a cstring and parse the line if complete. If not
+   * complete store the received data in a buffer and wait for more data. */
+  for (i = 0; i < len && srv_buf_len < sizeof(srv_buf); i++) {
     ch = buf[i];
     if (ch == '\r')
       srv_buf[srv_buf_len++] = '\0';
@@ -114,13 +116,6 @@ static void cli_write_cb(EV_P_ ev_io *w, int revents)
     free(msg->raw);
     free(msg);
   }
-
-  /*STAILQ_FOREACH(msg, &msg_queue, link) {
-    printf("b%d: %s\n", b++, msg->params);
-    STAILQ_REMOVE(&msg_queue, msg, irc_msg, link);
-    free(msg->raw);
-    free(msg);
-  }*/
 
   ev_io_stop(EV_A_ w);
 }
