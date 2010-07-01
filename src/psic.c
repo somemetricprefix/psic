@@ -11,14 +11,16 @@
 #include "util.h"
 #include "queue.h"
 
-struct irc_message {
-  STAILQ_ENTRY(irc_message) link;
+int a, b;
+
+struct irc_msg {
+  STAILQ_ENTRY(irc_msg) link;
   char *raw;
   char *prefix;
   char *command;
   char *params;
 };
-STAILQ_HEAD(irc_msg_queue, irc_message);
+STAILQ_HEAD(irc_msg_queue, irc_msg);
 
 static char *host = "irc.rizon.net";
 static char *port = "6669";
@@ -35,12 +37,12 @@ static struct irc_msg_queue msg_queue = STAILQ_HEAD_INITIALIZER(msg_queue);
 
 static void parse(char *str)
 {
-  struct irc_message *msg;
+  struct irc_msg *msg;
   char *p, *raw;
 
   p = raw = str;
 
-  msg = (struct irc_message *)calloc(1, sizeof(struct irc_message));
+  msg = (struct irc_msg *)calloc(1, sizeof(struct irc_msg));
   if (!msg)
     die("error: calloc():");
 
@@ -48,8 +50,6 @@ static void parse(char *str)
   if (!msg->raw)
     die("error: strdup():");
 
-  /* TODO: parse message into irc_message struct */
-  msg->prefix = NULL;
   while (*p) {
     switch (*p) {
     case ':':
@@ -70,7 +70,7 @@ static void parse(char *str)
     p++;
   }
 
-  printf("a: %s\n", msg->params);
+  printf("a%d: %s\n", a++, msg->params);
   STAILQ_INSERT_TAIL(&msg_queue, msg, link);
 }
 
@@ -106,17 +106,21 @@ static void srv_write_cb(EV_P_ ev_io *w, int revents)
 
 static void cli_write_cb(EV_P_ ev_io *w, int revents)
 {
-  struct irc_message *msg, *tmp;
+  struct irc_msg *msg, *tmp;
 
   STAILQ_FOREACH_SAFE(msg, &msg_queue, link, tmp) {
-    //puts(msg->prefix);
-    //puts(msg->command);
-    //puts(msg->params);
-    printf("b: %s\n", msg->params);
-    STAILQ_REMOVE(&msg_queue, msg, irc_message, link);
+    printf("b%d: %s\n", b++, msg->params);
+    STAILQ_REMOVE(&msg_queue, msg, irc_msg, link);
     free(msg->raw);
     free(msg);
   }
+
+  /*STAILQ_FOREACH(msg, &msg_queue, link) {
+    printf("b%d: %s\n", b++, msg->params);
+    STAILQ_REMOVE(&msg_queue, msg, irc_msg, link);
+    free(msg->raw);
+    free(msg);
+  }*/
 
   ev_io_stop(EV_A_ w);
 }
