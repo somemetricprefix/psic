@@ -11,8 +11,6 @@
 #include "util.h"
 #include "queue.h"
 
-int a, b;
-
 struct irc_msg {
   STAILQ_ENTRY(irc_msg) link;
   char *raw;
@@ -40,15 +38,15 @@ static void parse(char *str)
   struct irc_msg *msg;
   char *p, *tmp;
 
-  p = tmp = str;
-
   msg = (struct irc_msg *)calloc(1, sizeof(struct irc_msg));
   if (!msg)
     die("error: calloc():");
 
-  msg->raw = strdup(tmp);
+  msg->raw = strdup(str);
   if (!msg->raw)
     die("error: strdup():");
+
+  p = tmp = msg->raw;
 
   while (*p) {
     switch (*p) {
@@ -70,7 +68,6 @@ static void parse(char *str)
     p++;
   }
 
-  printf("a%d: %s\n", a++, msg->params);
   STAILQ_INSERT_TAIL(&msg_queue, msg, link);
 }
 
@@ -88,13 +85,14 @@ static void srv_read_cb(EV_P_ ev_io *w, int revents)
    * complete store the received data in a buffer and wait for more data. */
   for (i = 0; i < len && srv_buf_len < sizeof(srv_buf); i++) {
     ch = buf[i];
-    if (ch == '\r')
+    if (ch == '\r') {
       srv_buf[srv_buf_len++] = '\0';
-    else if (ch == '\n') {
+    } else if (ch == '\n') {
       parse(srv_buf);
       srv_buf_len = 0;
-    } else
+    } else {
       srv_buf[srv_buf_len++] = ch;
+    }
   }
 
   ev_io_start(EV_A_ &cli_write);
@@ -111,7 +109,10 @@ static void cli_write_cb(EV_P_ ev_io *w, int revents)
   struct irc_msg *msg, *tmp;
 
   STAILQ_FOREACH_SAFE(msg, &msg_queue, link, tmp) {
-    printf("b%d: %s\n", b++, msg->params);
+    puts("---");
+    puts(msg->prefix);
+    puts(msg->command);
+    puts(msg->params);
     STAILQ_REMOVE(&msg_queue, msg, irc_msg, link);
     free(msg->raw);
     free(msg);
